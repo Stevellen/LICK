@@ -16,8 +16,7 @@ class LightningImageClassifier(pl.LightningModule):
         lr,
         optimizer,
         loss_fn,
-        class_weights=None,
-        **model_kwargs
+        class_weights=None
     ):
         super().__init__()
 
@@ -25,17 +24,44 @@ class LightningImageClassifier(pl.LightningModule):
         self.num_labels = num_labels
         self.lr = lr
         self.optimizer = optimizer
+        self.loss_fn = loss_fn
 
-    
     def configure_optimizers(self):
         return self.optimizer(self.parameters(), lr=self.lr)
 
     def forward(self, x):
         return self.model(x)
 
+    def _step(self, batch):
+        inputs, labels = batch
+        preds = self(inputs)
+        loss = self.loss_fn(preds, labels)
+        return preds, loss
     
-        
+    def training_step(self, batch, batch_idx):
+        preds, loss = self._step(batch)
+        self.log_training_metrics(preds, loss, batch_idx)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        preds, loss = self._step(batch)
+        self.log_validation_metrics(preds, loss, batch_idx)
 
+    def test_step(self, batch, batch_idx):
+        preds, loss = self._step(batch)
+        self.log_test_metrics(preds, loss, batch_idx)
+
+    def log_training_metrics(self, preds, loss, batch_idx):
+        return
+
+    def log_validation_metrics(self, preds, loss, batch_idx):
+        return
+    
+    def log_test_metrics(self, preds, loss, batch_idx):
+        return
+
+
+    
 
 def get_model(
     model: str,
