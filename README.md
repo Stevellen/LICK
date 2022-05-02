@@ -1,4 +1,4 @@
-# Simple Lightning Image Classification toolKit
+# Simple Lightning Image Classification toolKit (SLICK)
 
 SLICK is a simple toolkit to enable training of image classification models on the Pytorch-Lightning framework.
 
