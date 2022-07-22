@@ -15,7 +15,7 @@ class LightningImageClassifier(pl.LightningModule):
     def __init__(
         self,
         model,
-        num_labels,
+        num_classes,
         lr,
         optimizer,
         loss_fn,
@@ -24,18 +24,18 @@ class LightningImageClassifier(pl.LightningModule):
         super().__init__()
 
         self.model = model
-        self.num_labels = num_labels
+        self.num_classes = num_classes
         self.lr = lr
         self.optimizer = optimizer
         self.loss_fn = loss_fn
-        self.activation_fn = nn.Sigmoid() if num_labels == 1 else nn.Softmax(dim=1)
-        self.train_metrics, self.validation_metrics, self.test_metrics = get_metrics(threshold)
+        self.activation_fn = nn.Sigmoid() if num_classes == 1 else nn.Softmax(dim=1)
+        self.train_metrics, self.validation_metrics, self.test_metrics = get_metrics(num_classes, threshold)
         self.validation_cm = tm.ConfusionMatrix(
-            num_classes = 2 if num_labels in [1,2] else num_labels,
+            num_classes = 2 if num_classes == 1 else num_classes,
             normalize='true'
         )
         self.test_cm = tm.ConfusionMatrix(
-            num_classes = 2 if num_labels in [1,2] else num_labels,
+            num_classes = 2 if num_classes == 1 else num_classes,
             normalize='true'
         )
 
@@ -64,7 +64,7 @@ class LightningImageClassifier(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         preds, labels, loss = self._step(batch)
         self.log_validation_metrics(preds, labels.int(), loss, batch_idx)
-        return self.activation_fn(preds), labels
+        return preds, labels
 
     def validation_epoch_end(self, outputs):
         preds, labels = zip(*outputs)
@@ -80,7 +80,7 @@ class LightningImageClassifier(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         preds, labels, loss = self._step(batch)
         self.log_test_metrics(preds, labels.int(), loss, batch_idx)
-        return self.activation_fn(preds), labels
+        return preds, labels
 
     def test_epoch_end(self, outputs):
         preds, labels = zip(*outputs)
@@ -148,42 +148,45 @@ class LightningImageClassifier(pl.LightningModule):
 
 def get_model(
     model: str,
-    num_labels: int = -1,
-    pretrained:bool = True,
+    num_classes: int = -1,
+    pretrained: bool = True,
     freeze_backbone: bool = True,
-    class_weights: List[float] = None,
+    class_weights: Union[int, float, List[float]] = None,
     optimizer: str = 'AdamW',
     lr: float = 1e-3,
     threshold: float = 0.5
 ) -> LightningImageClassifier:
+
     model = getattr(models, model)(pretrained=pretrained)
     
-    if num_labels > 0: # if we have a different number of labels for this task we create a new classifier head
-        if hasattr(model, 'fc'): # model has a sinlge identifiable nn.Linear layer
-            model.fc = nn.Linear(model.fc.in_features, num_labels)
-        elif hasattr(model, 'classifier'): # model has an output contained in a nn.Sequential container
+    if num_classes > 0: # if we have a different number of labels for this task we create a new classifier head
+        if hasattr(model, 'fc'): # model has a sinlge identifiable nn.Linear layer as in ResNet
+            model.fc = nn.Linear(model.fc.in_features, num_classes)
+        elif hasattr(model, 'classifier'): # model has an output contained in a nn.Sequential container as in VGG
             output = list(model.classifier.children())[-1]
             model.classifier = nn.Sequential(
                 *list(model.classifier.children())[:-1],
-                nn.Linear(output.in_features, num_labels)
+                nn.Linear(output.in_features, num_classes)
             )
             for layer in model.classifier.children():
                 if isinstance(layer, nn.Linear):
                     layer.reset_parameters()
         elif hasattr(model, 'heads'): # handles ViT model outputs
             output = model.heads.head
-            model.heads.head = nn.Linear(output.in_features, num_labels)
+            model.heads.head = nn.Linear(output.in_features, num_classes)
 
     if freeze_backbone: # prevent gradient calculation for all but the final child
         for child in list(model.children())[:-1]:
             for param in child.parameters():
                 param.requires_grad = False
 
-    loss_fn = nn.BCEWithLogitsLoss(class_weights) if num_labels in [1,2] else nn.CrossEntropyLoss(class_weights)
+    if class_weights is not None:
+        class_weights = torch.tensor(class_weights)
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(class_weights)) if num_classes == 1 else nn.CrossEntropyLoss(class_weights)
 
     return LightningImageClassifier(
         model,
-        num_labels,
+        num_classes,
         lr,
         getattr(opt, optimizer),
         loss_fn,
